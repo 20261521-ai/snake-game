@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>프로 뱀 게임 (수정본)</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #0f0f13;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            flex-direction: column;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        h1 {
+            margin: 0 0 10px 0;
+            color: #0ff;
+            text-shadow: 0 0 10px #0ff, 0 0 20px #0ff;
+            letter-spacing: 2px;
+        }
+        .stats {
+            display: flex;
+            gap: 30px;
+            font-size: 1.2rem;
+            color: #ccc;
+        }
+        .stats span {
+            color: #fff;
+            font-weight: bold;
+        }
+        #game-container {
+            position: relative;
+        }
+        canvas {
+            background-color: #111;
+            border: 2px solid #333;
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.2);
+            position: relative;
+            z-index: 1;
+        }
+        .shake {
+            animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both;
+        }
+        @keyframes shake {
+            10%, 90% { transform: translate3d(-2px, 0, 0); }
+            20%, 80% { transform: translate3d(4px, 0, 0); }
+            30%, 50%, 70% { transform: translate3d(-6px, 0, 0); }
+            40%, 60% { transform: translate3d(6px, 0, 0); }
+        }
+        #overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border-radius: 10px;
+            backdrop-filter: blur(3px);
+            text-align: center;
+            z-index: 10; /* 버튼이 무조건 맨 위로 오도록 강제 */
+        }
+        #overlay-title {
+            color: #e74c3c;
+            font-size: 2rem;
+            margin: 0 0 10px 0;
+            text-shadow: 0 0 10px #e74c3c;
+        }
+        #overlay-text {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+        }
+        .hidden { display: none !important; }
+        button {
+            background: transparent;
+            color: #0ff;
+            border: 2px solid #0ff;
+            padding: 10px 20px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: all 0.3s;
+            text-shadow: 0 0 5px #0ff;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+            pointer-events: auto;
+        }
+        button:hover {
+            background: #0ff;
+            color: #000;
+            box-shadow: 0 0 20px #0ff;
+        }
+        .controls-hint {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>NEON SNAKE PRO</h1>
+        <div class="stats">
+            <div>SCORE: <span id="score">0</span></div>
+            <div>HIGH SCORE: <span id="highScore">0</span></div>
+            <div>SPEED: <span id="speedLevel">1</span></div>
+        </div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="500" height="500"></canvas>
+        <div id="overlay">
+            <h2 id="overlay-title">준비되셨나요?</h2>
+            <div id="overlay-text">한 방향으로 너무 오래 가면 위험합니다!</div>
+            <button id="start-btn" onclick="initGame()">게임 시작</button> </div>
+    </div>
+    
+    <div class="controls-hint">방향키: 이동 | 스페이스바: 일시정지</div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const overlay = document.getElementById("overlay");
+        const overlayTitle = document.getElementById("overlay-title");
+        const overlayText = document.getElementById("overlay-text");
+        const startBtn = document.getElementById("start-btn");
+        
+        const gridSize = 25;
+        const tileCount = canvas.width / gridSize;
+
+        let score = 0;
+        let speedLevel = 1;
+        let baseSpeed = 150; 
+        let highScore = 0;
+
+        // 로컬 스토리지 오류 방어 코드 추가
+        try {
+            highScore = localStorage.getItem("neonSnakeHighScore") || 0;
+        } catch (e) {
+            console.warn("로컬 스토리지 사용 불가 환경입니다.");
+        }
+        document.getElementById("highScore").innerText = highScore;
+
+        let snake, food, dx, dy, isGameOver, isPaused, gameLoopTimeout, particles;
+        
+        let lastDx = 0, lastDy = 0;
+        let straightLineCounter = 0;
+        let isEagleAttacking = false;
+        let eagle = { x: 0, y: 0, targetY: 0, state: '' };
+
+        document.addEventListener("keydown", handleInput);
+
+        // 전역 함수로 분리 (인라인 onclick에서도 작동하도록)
+        window.initGame = function() {
+            snake = [{x: 10, y: 10}];
+            score = 0;
+            speedLevel = 1;
+            dx = 0; dy = 0;
+            lastDx = 0; lastDy = 0;
+            straightLineCounter = 0;
+            isGameOver = false;
+            isPaused = false;
+            isEagleAttacking = false;
+            particles = [];
+            
+            document.getElementById("score").innerText = score;
+            document.getElementById("speedLevel").innerText = speedLevel;
+            overlay.classList.add("hidden");
+            canvas.classList.remove("shake");
+            
+            createFood();
+            clearTimeout(gameLoopTimeout);
+            gameLoop();
+        };
+
+        function gameLoop() {
+            if (isGameOver || isPaused || isEagleAttacking) return;
+
+            if (didGameEnd()) {
+                handleGameOver("GAME OVER", "벽이나 몸에 부딪혔습니다.");
+                return;
+            }
+
+            if (straightLineCounter >= 13) {
+                startEagleAttack();
+                return;
+            }
+
+            const currentSpeed = Math.max(50, baseSpeed - (speedLevel * 10));
+
+            gameLoopTimeout = setTimeout(function onTick() {
+                clearCanvas();
+                drawGrid();
+                updateParticles();
+                drawFood();
+                advanceSnake();
+                drawSnake();
+                drawParticles();
+                gameLoop();
+            }, currentSpeed);
+        }
+
+        function clearCanvas() {
+            ctx.fillStyle = "#111";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawGrid() {
+            ctx.strokeStyle = "#222";
+            ctx.lineWidth = 1;
+            for(let i = 0; i <= tileCount; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * gridSize, 0);
+                ctx.lineTo(i * gridSize, canvas.height);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(0, i * gridSize);
+                ctx.lineTo(canvas.width, i * gridSize);
+                ctx.stroke();
+            }
+        }
+
+        function drawSnake() {
+            snake.forEach((part, index) => {
+                const isHead = index === 0;
+                ctx.fillStyle = isHead ? "#0ff" : "#0aa";
+                ctx.shadowBlur = isHead ? 15 : 5;
+                ctx.shadowColor = "#0ff";
+                ctx.fillRect(part.x * gridSize + 1, part.y * gridSize + 1, gridSize - 2, gridSize - 2);
+            });
+            ctx.shadowBlur = 0;
+        }
+
+        function advanceSnake() {
+            if (dx === 0 && dy === 0) return;
+
+            if (dx === lastDx && dy === lastDy) {
+                straightLineCounter++;
+            } else {
+                straightLineCounter = 0;
+                lastDx = dx;
+                lastDy = dy;
+            }
+
+            const head = {x: snake[0].x + dx, y: snake[0].y + dy};
+            snake.unshift(head);
+
+            if (head.x === food.x && head.y === food.y) {
+                score += 10;
+                document.getElementById("score").innerText = score;
+                straightLineCounter = 0;
+                
+                if (score % 50 === 0) {
+                    speedLevel++;
+                    document.getElementById("speedLevel").innerText = speedLevel;
+                }
+                createParticles(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2);
+                createFood();
+            } else {
+                snake.pop();
+            }
+        }
+
+        function startEagleAttack() {
+            isEagleAttacking = true;
+            clearTimeout(gameLoopTimeout);
+            
+            const headX = snake[0].x * gridSize;
+            const headY = snake[0].y * gridSize;
+            
+            eagle = {
+                x: headX,
+                y: -80,
+                targetY: headY,
+                state: 'swoop'
+            };
+            
+            animateEagle();
+        }
+
+        function animateEagle() {
+            if (!isEagleAttacking) return;
+            
+            clearCanvas();
+            drawGrid();
+            drawFood();
+            
+            if (eagle.state === 'swoop') {
+                drawSnake();
+            }
+
+            ctx.font = "60px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = "#e74c3c";
+            ctx.fillText("🦅", eagle.x + gridSize/2, eagle.y + gridSize/2);
+            ctx.shadowBlur = 0;
+
+            if (eagle.state === 'swoop') {
+                eagle.y += 15;
+                
+                if (eagle.y >= eagle.targetY) {
+                    eagle.y = eagle.targetY;
+                    eagle.state = 'away';
+                    canvas.classList.add("shake");
+                }
+            } else if (eagle.state === 'away') {
+                eagle.y -= 12;
+                eagle.x += (dx * 3);
+                
+                ctx.fillStyle = "#0ff";
+                ctx.fillRect(eagle.x + 5, eagle.y + 30, gridSize - 2, gridSize - 2);
+                
+                if (eagle.y < -100) {
+                    isEagleAttacking = false;
+                    handleGameOver("EAGLE ATTACK!", "한 방향으로 너무 오래 가서 독수리의 밥이 되었습니다 🦅");
+                    return;
+                }
+            }
+            
+            requestAnimationFrame(animateEagle);
+        }
+
+        function createFood() {
+            food = {
+                x: Math.floor(Math.random() * tileCount),
+                y: Math.floor(Math.random() * tileCount)
+            };
+            if (snake.some(part => part.x === food.x && part.y === food.y)) {
+                createFood();
+            }
+        }
+
+        function drawFood() {
+            ctx.fillStyle = "#f0f";
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = "#f0f";
+            ctx.beginPath();
+            ctx.arc(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2, gridSize/2 - 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        }
+
+        function createParticles(x, y) {
+            for (let i = 0; i < 10; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 1
+                });
+            }
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.1;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.fillStyle = `rgba(255, 0, 255, ${p.life})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                ctx.fill();
+            });
+        }
+
+        function didGameEnd() {
+            if (dx === 0 && dy === 0) return false;
+
+            const hitLeft = snake[0].x < 0;
+            const hitRight = snake[0].x >= tileCount;
+            const hitTop = snake[0].y < 0;
+            const hitBottom = snake[0].y >= tileCount;
+
+            let hitSelf = false;
+            for (let i = 4; i < snake.length; i++) {
+                if (snake[i].x === snake[0].x && snake[i].y === snake[0].y) hitSelf = true;
+            }
+
+            return hitLeft || hitRight || hitTop || hitBottom || hitSelf;
+        }
+
+        function handleGameOver(title, message) {
+            isGameOver = true;
+            
+            if (title === "GAME OVER") {
+                canvas.classList.add("shake");
+            }
+            
+            try {
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem("neonSnakeHighScore", highScore);
+                    document.getElementById("highScore").innerText = highScore;
+                }
+            } catch (e) {}
+
+            setTimeout(() => {
+                overlayTitle.innerText = title;
+                overlayTitle.style.color = title.includes("EAGLE") ? "#e74c3c" : "#0ff";
+                overlayText.innerText = `${message}\n최종 점수: ${score}`;
+                startBtn.innerText = "다시 시작";
+                overlay.classList.remove("hidden");
+            }, 500);
+        }
+
+        function handleInput(e) {
+            if (isEagleAttacking) return;
+
+            const key = e.keyCode;
+            
+            if (key === 32) {
+                if (isGameOver || (dx === 0 && dy === 0)) return;
+                isPaused = !isPaused;
+                if (isPaused) {
+                    overlayTitle.innerText = "PAUSED";
+                    overlayTitle.style.color = "#0ff";
+                    overlayText.innerText = "잠시 휴식 중...";
+                    startBtn.innerText = "계속하기";
+                    overlay.classList.remove("hidden");
+                } else {
+                    overlay.classList.add("hidden");
+                    gameLoop();
+                }
+                return;
+            }
+
+            const goingUp = dy === -1;
+            const goingDown = dy === 1;
+            const goingRight = dx === 1;
+            const goingLeft = dx === -1;
+
+            if (key === 37 && !goingRight) { dx = -1; dy = 0; }
+            if (key === 38 && !goingDown) { dx = 0; dy = -1; }
+            if (key === 39 && !goingLeft) { dx = 1; dy = 0; }
+            if (key === 40 && !goingUp) { dx = 0; dy = 1; }
+        }
+        
+        clearCanvas();
+        drawGrid();
+    </script>
+</body>
+</html>
